@@ -46,7 +46,7 @@ const preprocess = (source, modelWidth, modelHeight) => {
  * @param {VoidFunction} callback function to run after detection process
  */
 
-export const detect = async (source, model, canvasRef, callback = () => {}) => {
+export const detect = async (source, model, canvasRef, updateTrajectories) => {
   const [modelWidth, modelHeight] = model.inputShape.slice(1, 3);
 
   tf.engine().startScope();
@@ -55,23 +55,13 @@ export const detect = async (source, model, canvasRef, callback = () => {}) => {
   const [boxesTensor, scoresTensor] = model.net.execute(input);
 
   const [boxes, scores, classes] = tf.tidy(() => {
-    // 바운딩 박스 처리
     const boxes = boxesTensor.squeeze();
     const [x1, y1, x2, y2, objectness, classScore] = tf.split(boxes, 6, -1);
     const processedBoxes = tf.concat([y1, x1, y2, x2], -1);
-
-    // 점수 처리
     const scores = scoresTensor.squeeze();
-
-    // 클래스 처리 (여기서는 단일 클래스로 가정)
     const classes = tf.zeros(scores.shape, "int32");
-
     return [processedBoxes, scores, classes];
   });
-
-  console.log("Boxes shape:", boxes.shape);
-  console.log("Scores shape:", scores.shape);
-  console.log("Classes shape:", classes.shape);
 
   const nms = await tf.image.nonMaxSuppressionAsync(
     boxes,
@@ -85,13 +75,16 @@ export const detect = async (source, model, canvasRef, callback = () => {}) => {
   const scores_data = scores.gather(nms, 0).dataSync();
   const classes_data = classes.gather(nms, 0).dataSync();
 
-  renderBoxes(canvasRef, boxes_data, scores_data, classes_data, [
-    xRatio,
-    yRatio,
-  ]);
-  tf.dispose([boxesTensor, scoresTensor, boxes, scores, classes, nms]);
+  const frameData = renderBoxes(
+    canvasRef,
+    boxes_data,
+    scores_data,
+    classes_data,
+    [xRatio, yRatio]
+  );
+  updateTrajectories(frameData);
 
-  callback();
+  tf.dispose([boxesTensor, scoresTensor, boxes, scores, classes, nms]);
 
   tf.engine().endScope();
 };
@@ -101,21 +94,20 @@ export const detect = async (source, model, canvasRef, callback = () => {}) => {
  * @param {tf.GraphModel} model loaded YOLOv8 tensorflow.js model
  * @param {HTMLCanvasElement} canvasRef canvas reference
  */
-export const detectVideo = (vidSource, model, canvasRef) => {
-  /**
-   * Function to detect every frame from video
-   */
+export const detectVideo = (
+  vidSource,
+  model,
+  canvasRef,
+  updateTrajectories
+) => {
   const detectFrame = async () => {
     if (vidSource.videoWidth === 0 && vidSource.srcObject === null) {
-      const ctx = canvasRef.getContext("2d");
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); // clean canvas
-      return; // handle if source is closed
+      return;
     }
 
-    detect(vidSource, model, canvasRef, () => {
-      requestAnimationFrame(detectFrame); // get another frame
-    });
+    await detect(vidSource, model, canvasRef, updateTrajectories);
+    requestAnimationFrame(detectFrame);
   };
 
-  detectFrame(); // initialize to detect every frame
+  detectFrame();
 };

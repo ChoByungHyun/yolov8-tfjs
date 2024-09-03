@@ -8,22 +8,19 @@ import labels from "./labels.json";
  * @param {Array} classes_data class array
  * @param {Array[Number]} ratios boxes ratio [xRatio, yRatio]
  */
-export const renderBoxes = (canvasRef, boxes_data, scores_data, classes_data, ratios) => {
+export const renderBoxes = (
+  canvasRef,
+  boxes_data,
+  scores_data,
+  classes_data,
+  ratios
+) => {
   const ctx = canvasRef.getContext("2d");
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height); // clean canvas
-
   const colors = new Colors();
 
-  // font configs
-  const font = `${Math.max(
-    Math.round(Math.max(ctx.canvas.width, ctx.canvas.height) / 40),
-    14
-  )}px Arial`;
-  ctx.font = font;
-  ctx.textBaseline = "top";
+  const frameData = [];
 
   for (let i = 0; i < scores_data.length; ++i) {
-    // filter based on class threshold
     const klass = labels[classes_data[i]];
     const color = colors.get(classes_data[i]);
     const score = (scores_data[i] * 100).toFixed(1);
@@ -33,34 +30,19 @@ export const renderBoxes = (canvasRef, boxes_data, scores_data, classes_data, ra
     x2 *= ratios[0];
     y1 *= ratios[1];
     y2 *= ratios[1];
-    const width = x2 - x1;
-    const height = y2 - y1;
 
-    // draw box.
-    ctx.fillStyle = Colors.hexToRgba(color, 0.2);
-    ctx.fillRect(x1, y1, width, height);
+    const centerX = (x1 + x2) / 2;
+    const centerY = (y1 + y2) / 2;
 
-    // draw border box.
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(Math.min(ctx.canvas.width, ctx.canvas.height) / 200, 2.5);
-    ctx.strokeRect(x1, y1, width, height);
-
-    // Draw the label background.
     ctx.fillStyle = color;
-    const textWidth = ctx.measureText(klass + " - " + score + "%").width;
-    const textHeight = parseInt(font, 10); // base 10
-    const yText = y1 - (textHeight + ctx.lineWidth);
-    ctx.fillRect(
-      x1 - 1,
-      yText < 0 ? 0 : yText, // handle overflow label box
-      textWidth + ctx.lineWidth,
-      textHeight + ctx.lineWidth
-    );
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, 3, 0, 2 * Math.PI);
+    ctx.fill();
 
-    // Draw labels
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(klass + " - " + score + "%", x1 - 1, yText < 0 ? 0 : yText);
+    frameData.push({ x: centerX, y: centerY, class: klass, color: color });
   }
+
+  return [boxes_data, scores_data, classes_data, ratios, frameData];
 };
 
 class Colors {
@@ -96,9 +78,11 @@ class Colors {
   static hexToRgba = (hex, alpha) => {
     var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return result
-      ? `rgba(${[parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)].join(
-          ", "
-        )}, ${alpha})`
+      ? `rgba(${[
+          parseInt(result[1], 16),
+          parseInt(result[2], 16),
+          parseInt(result[3], 16),
+        ].join(", ")}, ${alpha})`
       : null;
   };
 }
