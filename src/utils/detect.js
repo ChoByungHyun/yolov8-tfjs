@@ -82,7 +82,14 @@ export const detect = async (source, model, canvasRef, updateTrajectories) => {
     classes_data,
     [xRatio, yRatio]
   );
-  updateTrajectories(frameData);
+  updateTrajectories({
+    time: source.currentTime || 0,
+    points: frameData,
+    boxes: boxes_data,
+    scores: scores_data,
+    classes: classes_data,
+    ratios: [xRatio, yRatio],
+  });
 
   tf.dispose([boxesTensor, scoresTensor, boxes, scores, classes, nms]);
 

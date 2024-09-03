@@ -13,8 +13,16 @@ export const renderBoxes = (
   boxes_data,
   scores_data,
   classes_data,
-  ratios
+  ratios,
+  drawBoxes = true
 ) => {
+  console.log("Rendering boxes:", {
+    boxes_data,
+    scores_data,
+    classes_data,
+    ratios,
+    drawBoxes,
+  });
   const ctx = canvasRef.getContext("2d");
   const colors = new Colors();
 
@@ -34,23 +42,37 @@ export const renderBoxes = (
     const centerX = (x1 + x2) / 2;
     const centerY = (y1 + y2) / 2;
 
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(centerX, centerY, 3, 0, 2 * Math.PI);
-    ctx.fill();
+    if (drawBoxes) {
+      // 바운딩 박스 그리기
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+      const centerX = (x1 + x2) / 2;
+      const centerY = (y1 + y2) / 2;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // 라벨 그리기
+      ctx.fillStyle = color;
+      ctx.font = "12px Arial";
+      // ctx.fillText(`${klass} ${score}%`, x1, y1 > 10 ? y1 - 5 : 10);
+    }
 
     frameData.push({ x: centerX, y: centerY, class: klass, color: color });
   }
 
-  return [boxes_data, scores_data, classes_data, ratios, frameData];
+  return frameData;
 };
 
 class Colors {
   // ultralytics color palette https://ultralytics.com/
   constructor() {
     this.palette = [
-      "#FF3838",
-      "#FF9D97",
+      "red",
+      "blue",
       "#FF701F",
       "#FFB21D",
       "#CFD231",

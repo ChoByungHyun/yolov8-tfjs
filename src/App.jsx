@@ -13,6 +13,12 @@ const App = () => {
     inputShape: [1, 0, 0, 3],
   }); // init model & input shape
 
+  const [trajectories, setTrajectories] = useState([]);
+  console.log("🚀 ~ App ~ trajectories:", trajectories);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isVideoEnded, setIsVideoEnded] = useState(false);
+  const [videoDuration, setVideoDuration] = useState(0);
+
   // references
   const imageRef = useRef(null);
   const cameraRef = useRef(null);
@@ -20,7 +26,7 @@ const App = () => {
   const canvasRef = useRef(null);
 
   // model configs
-  const modelName = "yolov8n";
+  const modelName = "yolov10n";
 
   useEffect(() => {
     tf.ready().then(async () => {
@@ -47,13 +53,96 @@ const App = () => {
     });
   }, []);
 
+  const updateTrajectories = (newPoints, time) => {
+    setTrajectories((prev) => [...prev, { time, points: newPoints }]);
+  };
+
+  const resetDetection = () => {
+    setTrajectories([]);
+    setCurrentTime(0);
+    setIsVideoEnded(false);
+    setVideoDuration(0);
+    canvasRef.current
+      .getContext("2d")
+      .clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  };
+
+  const handleVideoLoad = (event) => {
+    resetDetection();
+    const duration = event.target.duration;
+    if (!isNaN(duration) && isFinite(duration)) {
+      setVideoDuration(duration);
+    } else {
+      setVideoDuration(0);
+    }
+    setTrajectories([]);
+    setCurrentTime(0);
+    setIsVideoEnded(false);
+  };
+
+  const handleVideoEnd = () => {
+    setIsVideoEnded(true);
+  };
+
+  const handleTimeUpdate = (event) => {
+    setCurrentTime(event.target.currentTime);
+  };
+
+  const handleSliderChange = (event) => {
+    const time = parseFloat(event.target.value);
+    setCurrentTime(time);
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+    }
+    renderTrajectories(time);
+  };
+
+  const renderTrajectories = (time) => {
+    console.log("Rendering trajectories at time:", time);
+    console.log("Trajectories:", trajectories);
+
+    const ctx = canvasRef.current.getContext("2d");
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+    trajectories
+      .filter((t) => t.time <= time)
+      .forEach((frame) => {
+        console.log("Drawing frame:", frame);
+        frame.points.forEach((point) => {
+          console.log("Drawing point:", point);
+          ctx.fillStyle = point.color;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        });
+      });
+
+    const currentFrame = trajectories.find(
+      (t) => Math.abs(t.time - time) < 0.1
+    );
+    if (currentFrame) {
+      console.log("Drawing current frame boxes");
+      renderBoxes(
+        canvasRef.current,
+        currentFrame.boxes,
+        currentFrame.scores,
+        currentFrame.classes,
+        currentFrame.ratios,
+        true
+      );
+    }
+  };
+
   return (
     <div className="App">
-      {loading.loading && <Loader>Loading model... {(loading.progress * 100).toFixed(2)}%</Loader>}
+      {loading.loading && (
+        <Loader>Loading model... {(loading.progress * 100).toFixed(2)}%</Loader>
+      )}
       <div className="header">
-        <h1>📷 YOLOv8 Live Detection App</h1>
+        <h1>📷 YOLOv10 Live Detection App</h1>
         <p>
-          YOLOv8 live detection application on browser powered by <code>tensorflow.js</code>
+          YOLOv8 live detection application on browser powered by{" "}
+          <code>tensorflow.js</code>
         </p>
         <p>
           Serving : <code className="code">{modelName}</code>
@@ -64,24 +153,68 @@ const App = () => {
         <img
           src="#"
           ref={imageRef}
-          onLoad={() => detect(imageRef.current, model, canvasRef.current)}
+          onLoad={() =>
+            detect(
+              imageRef.current,
+              model,
+              canvasRef.current,
+              updateTrajectories
+            )
+          }
         />
         <video
           autoPlay
           muted
           ref={cameraRef}
-          onPlay={() => detectVideo(cameraRef.current, model, canvasRef.current)}
+          onPlay={() =>
+            detectVideo(
+              cameraRef.current,
+              model,
+              canvasRef.current,
+              updateTrajectories
+            )
+          }
         />
         <video
-          autoPlay
-          muted
           ref={videoRef}
-          onPlay={() => detectVideo(videoRef.current, model, canvasRef.current)}
+          autoPlay
+          onLoadedMetadata={handleVideoLoad}
+          onTimeUpdate={handleTimeUpdate}
+          onEnded={handleVideoEnd}
+          onPlay={() =>
+            detectVideo(
+              videoRef.current,
+              model,
+              canvasRef.current,
+              updateTrajectories
+            )
+          }
         />
-        <canvas width={model.inputShape[1]} height={model.inputShape[2]} ref={canvasRef} />
+        <canvas
+          width={model.inputShape[1]}
+          height={model.inputShape[2]}
+          ref={canvasRef}
+        />
       </div>
 
-      <ButtonHandler imageRef={imageRef} cameraRef={cameraRef} videoRef={videoRef} />
+      {videoDuration > 0 && (
+        <input
+          type="range"
+          min="0"
+          max={videoDuration}
+          step="0.1"
+          value={currentTime}
+          onChange={handleSliderChange}
+          style={{ width: "100%" }}
+        />
+      )}
+
+      <ButtonHandler
+        handleResetTrajectories={resetDetection}
+        imageRef={imageRef}
+        cameraRef={cameraRef}
+        videoRef={videoRef}
+      />
     </div>
   );
 };

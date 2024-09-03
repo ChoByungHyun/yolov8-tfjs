@@ -1,7 +1,12 @@
 import { useState, useRef } from "react";
 import { Webcam } from "../utils/webcam";
 
-const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
+const ButtonHandler = ({
+  imageRef,
+  cameraRef,
+  videoRef,
+  handleResetTrajectories,
+}) => {
   const [streaming, setStreaming] = useState(null); // streaming state
   const inputImageRef = useRef(null); // video input reference
   const inputVideoRef = useRef(null); // video input reference
@@ -16,6 +21,7 @@ const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
     setStreaming(null); // set streaming to null
     inputImageRef.current.value = ""; // reset input image
     imageRef.current.style.display = "none"; // hide image
+    handleResetTrajectories();
   };
 
   // closing video streaming
@@ -23,10 +29,10 @@ const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
     const url = videoRef.current.src;
     videoRef.current.src = ""; // restore video source
     URL.revokeObjectURL(url); // revoke url
-
     setStreaming(null); // set streaming to null
     inputVideoRef.current.value = ""; // reset input video
-    videoRef.current.style.display = "none"; // hide video
+    handleResetTrajectories();
+    // videoRef.current.style.display = "none"; // hide video
   };
 
   return (
@@ -50,7 +56,10 @@ const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
           if (streaming === null) inputImageRef.current.click();
           // closing image streaming
           else if (streaming === "image") closeImage();
-          else alert(`Can't handle more than 1 stream\nCurrently streaming : ${streaming}`); // if streaming video or webcam
+          else
+            alert(
+              `Can't handle more than 1 stream\nCurrently streaming : ${streaming}`
+            ); // if streaming video or webcam
         }}
       >
         {streaming === "image" ? "Close" : "Open"} Image
@@ -65,7 +74,7 @@ const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
           if (streaming === "image") closeImage(); // closing image streaming
           const url = URL.createObjectURL(e.target.files[0]); // create blob url
           videoRef.current.src = url; // set video source
-          videoRef.current.addEventListener("ended", () => closeVideo()); // add ended video listener
+          // videoRef.current.addEventListener("ended", () => closeVideo()); // add ended video listener
           videoRef.current.style.display = "block"; // show video
           setStreaming("video"); // set streaming to video
         }}
@@ -74,10 +83,14 @@ const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
       <button
         onClick={() => {
           // if not streaming
-          if (streaming === null || streaming === "image") inputVideoRef.current.click();
+          if (streaming === null || streaming === "image")
+            inputVideoRef.current.click();
           // closing video streaming
           else if (streaming === "video") closeVideo();
-          else alert(`Can't handle more than 1 stream\nCurrently streaming : ${streaming}`); // if streaming webcam
+          else
+            alert(
+              `Can't handle more than 1 stream\nCurrently streaming : ${streaming}`
+            ); // if streaming webcam
         }}
       >
         {streaming === "video" ? "Close" : "Open"} Video
@@ -99,7 +112,10 @@ const ButtonHandler = ({ imageRef, cameraRef, videoRef }) => {
             webcam.close(cameraRef.current);
             cameraRef.current.style.display = "none";
             setStreaming(null);
-          } else alert(`Can't handle more than 1 stream\nCurrently streaming : ${streaming}`); // if streaming video
+          } else
+            alert(
+              `Can't handle more than 1 stream\nCurrently streaming : ${streaming}`
+            ); // if streaming video
         }}
       >
         {streaming === "camera" ? "Close" : "Open"} Webcam
