@@ -1,31 +1,33 @@
 import React, { useState, useEffect, useRef } from "react";
 import * as tf from "@tensorflow/tfjs";
-import "@tensorflow/tfjs-backend-webgl"; // set backend to webgl
+import "@tensorflow/tfjs-backend-webgl";
 import Loader from "./components/loader";
 import ButtonHandler from "./components/btn-handler";
 import { detect, detectVideo } from "./utils/detect";
+import { renderBoxes } from "./utils/renderBox";
 import "./style/App.css";
+import { nonMaxSuppression, postprocess, preprocess } from "./utils/process";
+import { getVideoInfo } from "./utils/getVideoInfo";
 
 const App = () => {
-  const [loading, setLoading] = useState({ loading: true, progress: 0 }); // loading state
+  const [loading, setLoading] = useState({ loading: true, progress: 0 });
   const [model, setModel] = useState({
     net: null,
     inputShape: [1, 0, 0, 3],
-  }); // init model & input shape
+  });
 
-  const [trajectories, setTrajectories] = useState([]);
-  console.log("🚀 ~ App ~ trajectories:", trajectories);
+  const [detectionResults, setDetectionResults] = useState([]);
   const [currentTime, setCurrentTime] = useState(0);
   const [isVideoEnded, setIsVideoEnded] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [videoInfo, setVideoInfo] = useState(null);
 
-  // references
   const imageRef = useRef(null);
   const cameraRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
-  // model configs
   const modelName = "yolov10n";
 
   useEffect(() => {
@@ -34,12 +36,11 @@ const App = () => {
         `${window.location.href}/${modelName}_web_model/model.json`,
         {
           onProgress: (fractions) => {
-            setLoading({ loading: true, progress: fractions }); // set loading fractions
+            setLoading({ loading: true, progress: fractions });
           },
         }
-      ); // load model
+      );
 
-      // warming up model
       const dummyInput = tf.ones(yolov8.inputs[0].shape);
       const warmupResults = yolov8.execute(dummyInput);
 
@@ -47,69 +48,72 @@ const App = () => {
       setModel({
         net: yolov8,
         inputShape: yolov8.inputs[0].shape,
-      }); // set model & input shape
+      });
 
-      tf.dispose([warmupResults, dummyInput]); // cleanup memory
+      tf.dispose([warmupResults, dummyInput]);
     });
   }, []);
 
-  const updateTrajectories = (newPoints, time) => {
-    setTrajectories((prev) => [...prev, { time, points: newPoints }]);
-  };
-
-  const resetDetection = () => {
-    setTrajectories([]);
-    setCurrentTime(0);
-    setIsVideoEnded(false);
-    setVideoDuration(0);
-    canvasRef.current
-      .getContext("2d")
-      .clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-  };
-
-  const handleVideoLoad = (event) => {
-    resetDetection();
-    const duration = event.target.duration;
-    if (!isNaN(duration) && isFinite(duration)) {
-      setVideoDuration(duration);
-    } else {
-      setVideoDuration(0);
+  const processVideo = async () => {
+    if (!videoInfo) {
+      console.error("Video info not available");
+      return;
     }
-    setTrajectories([]);
-    setCurrentTime(0);
-    setIsVideoEnded(false);
-  };
 
-  const handleVideoEnd = () => {
-    setIsVideoEnded(true);
-  };
+    setIsProcessing(true);
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    const results = [];
 
-  const handleTimeUpdate = (event) => {
-    setCurrentTime(event.target.currentTime);
-  };
+    video.currentTime = 0;
+    const frameDuration = 1 / videoInfo.videoFPS;
 
-  const handleSliderChange = (event) => {
-    const time = parseFloat(event.target.value);
-    setCurrentTime(time);
-    if (videoRef.current) {
-      videoRef.current.currentTime = time;
-    }
-    renderTrajectories(time);
-  };
+    while (video.currentTime < video.duration) {
+      const currentTime = video.currentTime;
 
-  const renderTrajectories = (time) => {
-    console.log("Rendering trajectories at time:", time);
-    console.log("Trajectories:", trajectories);
+      // Process the frame
+      const [input, xRatio, yRatio] = preprocess(
+        video,
+        model.inputShape[1],
+        model.inputShape[2]
+      );
+      const [boxesTensor, scoresTensor] = model.net.execute(input);
+      const [boxes, scores, classes] = postprocess(boxesTensor, scoresTensor);
 
-    const ctx = canvasRef.current.getContext("2d");
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      const [filteredBoxes, filteredScores, filteredClasses] =
+        await nonMaxSuppression(boxes, scores, classes);
 
-    trajectories
-      .filter((t) => t.time <= time)
-      .forEach((frame) => {
-        console.log("Drawing frame:", frame);
-        frame.points.forEach((point) => {
-          console.log("Drawing point:", point);
+      const frameData = renderBoxes(
+        canvas,
+        filteredBoxes,
+        filteredScores,
+        filteredClasses,
+        [xRatio, yRatio],
+        false // Set to false to not draw bounding boxes here
+      );
+
+      const newResult = {
+        time: currentTime,
+        points: frameData,
+        boxes: filteredBoxes,
+        scores: filteredScores,
+        classes: filteredClasses,
+        ratios: [xRatio, yRatio],
+      };
+
+      results.push(newResult);
+
+      // Update state to trigger re-render
+      setDetectionResults((prevResults) => [...prevResults, newResult]);
+      setCurrentTime(currentTime);
+
+      // Render current frame
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw all previous points
+      results.forEach((result) => {
+        result.points.forEach((point) => {
           ctx.fillStyle = point.color;
           ctx.beginPath();
           ctx.arc(point.x, point.y, 3, 0, 2 * Math.PI);
@@ -117,13 +121,63 @@ const App = () => {
         });
       });
 
-    const currentFrame = trajectories.find(
-      (t) => Math.abs(t.time - time) < 0.1
-    );
-    if (currentFrame) {
-      console.log("Drawing current frame boxes");
+      // Draw current frame's bounding boxes
       renderBoxes(
-        canvasRef.current,
+        canvas,
+        newResult.boxes,
+        newResult.scores,
+        newResult.classes,
+        newResult.ratios,
+        true
+      );
+
+      tf.dispose([input, boxesTensor, scoresTensor, boxes, scores, classes]);
+
+      // Move to next frame
+      await new Promise((resolve) => {
+        video.onseeked = resolve;
+        video.currentTime += frameDuration;
+      });
+
+      // Add a small delay to allow for rendering
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    setIsProcessing(false);
+    video.currentTime = 0;
+  };
+
+  const renderFrame = (time) => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (detectionResults.length === 0) return;
+
+    // Find the frame that is closest to, but not exceeding the current time
+    const currentFrame = detectionResults.reduce((prev, curr) =>
+      curr.time <= time &&
+      Math.abs(curr.time - time) < Math.abs(prev.time - time)
+        ? curr
+        : prev
+    );
+
+    // Draw all previous points
+    detectionResults
+      .filter((r) => r.time <= time)
+      .forEach((frame) => {
+        frame.points.forEach((point) => {
+          ctx.fillStyle = point.color;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        });
+      });
+
+    // Draw current frame's bounding boxes
+    if (currentFrame) {
+      renderBoxes(
+        canvas,
         currentFrame.boxes,
         currentFrame.scores,
         currentFrame.classes,
@@ -133,15 +187,57 @@ const App = () => {
     }
   };
 
+  const handleVideoLoad = async (event) => {
+    const video = event.target;
+    const duration = video.duration;
+    if (!isNaN(duration) && isFinite(duration)) {
+      setVideoDuration(duration);
+    } else {
+      setVideoDuration(0);
+    }
+    setCurrentTime(0);
+    setIsVideoEnded(false);
+    setDetectionResults([]);
+
+    // Get video info
+    const videoUrl = video.src;
+    const info = await getVideoInfo(videoUrl);
+    if (info) {
+      setVideoInfo(info);
+      console.log("Video FPS:", info.videoFPS);
+    } else {
+      console.error("Failed to get video info");
+    }
+  };
+
+  const handleVideoEnd = () => {
+    setIsVideoEnded(true);
+  };
+
+  const handleTimeUpdate = (event) => {
+    const currentTime = event.target.currentTime;
+    setCurrentTime(currentTime);
+    renderFrame(currentTime);
+  };
+
+  const handleSliderChange = (event) => {
+    const time = parseFloat(event.target.value);
+    setCurrentTime(time);
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+    }
+    renderFrame(time);
+  };
+
   return (
     <div className="App">
       {loading.loading && (
         <Loader>Loading model... {(loading.progress * 100).toFixed(2)}%</Loader>
       )}
       <div className="header">
-        <h1>📷 YOLOv10 Live Detection App</h1>
+        <h1>📷 YOLOv10 Object Tracking App</h1>
         <p>
-          YOLOv8 live detection application on browser powered by{" "}
+          YOLOv10 object tracking application on browser powered by{" "}
           <code>tensorflow.js</code>
         </p>
         <p>
@@ -150,45 +246,10 @@ const App = () => {
       </div>
 
       <div className="content">
-        <img
-          src="#"
-          ref={imageRef}
-          onLoad={() =>
-            detect(
-              imageRef.current,
-              model,
-              canvasRef.current,
-              updateTrajectories
-            )
-          }
-        />
-        <video
-          autoPlay
-          muted
-          ref={cameraRef}
-          onPlay={() =>
-            detectVideo(
-              cameraRef.current,
-              model,
-              canvasRef.current,
-              updateTrajectories
-            )
-          }
-        />
         <video
           ref={videoRef}
-          autoPlay
           onLoadedMetadata={handleVideoLoad}
-          onTimeUpdate={handleTimeUpdate}
-          onEnded={handleVideoEnd}
-          onPlay={() =>
-            detectVideo(
-              videoRef.current,
-              model,
-              canvasRef.current,
-              updateTrajectories
-            )
-          }
+          style={{ display: "none" }}
         />
         <canvas
           width={model.inputShape[1]}
@@ -210,11 +271,17 @@ const App = () => {
       )}
 
       <ButtonHandler
-        handleResetTrajectories={resetDetection}
-        imageRef={imageRef}
-        cameraRef={cameraRef}
         videoRef={videoRef}
+        processVideo={processVideo}
+        isProcessing={isProcessing}
       />
+
+      {isProcessing && (
+        <div>
+          <p>Processing: {((currentTime / videoDuration) * 100).toFixed(2)}%</p>
+          <progress value={currentTime} max={videoDuration}></progress>
+        </div>
+      )}
     </div>
   );
 };
