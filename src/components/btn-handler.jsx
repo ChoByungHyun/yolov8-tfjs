@@ -1,6 +1,13 @@
 import { useState, useRef } from "react";
 
-const ButtonHandler = ({ videoRef, processVideo, isProcessing }) => {
+/* eslint-disable */
+const ButtonHandler = ({
+  videoRef,
+  processVideo,
+  isProcessing,
+  setIsProcessing,
+  resetDetection,
+}) => {
   const [streaming, setStreaming] = useState(null);
   const inputVideoRef = useRef(null);
 
@@ -10,6 +17,8 @@ const ButtonHandler = ({ videoRef, processVideo, isProcessing }) => {
     URL.revokeObjectURL(url);
     setStreaming(null);
     inputVideoRef.current.value = "";
+    setIsProcessing(false); // Stop processing
+    resetDetection(); // Reset detection results and clear canvas
   };
 
   return (
@@ -23,6 +32,7 @@ const ButtonHandler = ({ videoRef, processVideo, isProcessing }) => {
           videoRef.current.src = url;
           videoRef.current.style.display = "block";
           setStreaming("video");
+          resetDetection(); // Reset detection when new video is loaded
         }}
         ref={inputVideoRef}
       />

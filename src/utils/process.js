@@ -43,10 +43,16 @@ export const preprocess = (source, modelWidth, modelHeight) => {
 export const postprocess = (boxesTensor, scoresTensor) => {
   const [boxes, scores, classes] = tf.tidy(() => {
     const boxes = boxesTensor.squeeze();
-    const [x1, y1, x2, y2, objectness, classScore] = tf.split(boxes, 6, -1);
+    console.log("🚀 ~ const[boxes,scores,classes]=tf.tidy ~ boxes:", boxes);
+    const [x1, y1, x2, y2] = tf.split(boxes, 6, -1);
     const processedBoxes = tf.concat([y1, x1, y2, x2], -1);
     const scores = scoresTensor.squeeze();
+    console.log(
+      "🚀 ~ const[boxes,scores,classes]=tf.tidy ~ scores.shape:",
+      scores.shape
+    );
     const classes = tf.zeros(scores.shape, "int32");
+    console.log("🚀 ~ const[boxes,scores,classes]=tf.tidy ~ classes:", classes);
     return [processedBoxes, scores, classes];
   });
 
@@ -82,6 +88,7 @@ export const nonMaxSuppression = async (
   const boxes_data = boxes.gather(nms, 0).dataSync();
   const scores_data = scores.gather(nms, 0).dataSync();
   const classes_data = classes.gather(nms, 0).dataSync();
+  console.log("🚀 ~ classes_data:", classes_data);
 
   return [boxes_data, scores_data, classes_data];
 };

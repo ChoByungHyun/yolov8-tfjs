@@ -27,16 +27,21 @@
   "homepage": "https://github.com/Hyuto/yolov8-tfjs#readme",
   "dependencies": {
     "@tensorflow/tfjs": "^4.1.0",
+    "eslint": "^9.9.1",
+    "kalman-filter": "^2.3.0",
     "normalize.css": "^8.0.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-mediainfo": "^0.0.42"
   },
   "devDependencies": {
+    "@eslint/js": "^9.9.1",
     "@types/react": "^18.0.24",
     "@types/react-dom": "^18.0.8",
     "@vitejs/plugin-react": "^2.2.0",
+    "eslint-plugin-react": "^7.35.2",
     "gh-pages": "^5.0.0",
+    "globals": "^15.9.0",
     "vite": "^3.2.3"
   }
 }

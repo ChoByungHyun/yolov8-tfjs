@@ -16,7 +16,7 @@ export const renderBoxes = (
   for (let i = 0; i < scores_data.length; ++i) {
     const klass = labels[classes_data[i]];
     const color = colors.get(classes_data[i]);
-    const score = (scores_data[i] * 100).toFixed(1);
+    const score = scores_data[i];
 
     let [y1, x1, y2, x2] = boxes_data.slice(i * 4, (i + 1) * 4);
     x1 *= ratios[0];
@@ -34,10 +34,21 @@ export const renderBoxes = (
 
       ctx.fillStyle = color;
       ctx.font = "12px Arial";
-      ctx.fillText(`${klass} ${score}%`, x1, y1 > 10 ? y1 - 5 : 10);
+      ctx.fillText(
+        `${klass} ${(score * 100).toFixed(1)}%`,
+        x1,
+        y1 > 10 ? y1 - 5 : 10
+      );
     }
 
-    frameData.push({ x: centerX, y: centerY, class: klass, color: color });
+    frameData.push({
+      id: `${klass}_${i}_${centerX.toFixed(2)}_${centerY.toFixed(2)}`,
+      x: centerX,
+      y: centerY,
+      class: klass,
+      score: score,
+      color: color,
+    });
   }
 
   return frameData;

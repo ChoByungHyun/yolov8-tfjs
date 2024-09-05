@@ -3,11 +3,12 @@ import * as tf from "@tensorflow/tfjs";
 import "@tensorflow/tfjs-backend-webgl";
 import Loader from "./components/loader";
 import ButtonHandler from "./components/btn-handler";
-import { detect, detectVideo } from "./utils/detect";
 import { renderBoxes } from "./utils/renderBox";
 import "./style/App.css";
 import { nonMaxSuppression, postprocess, preprocess } from "./utils/process";
 import { getVideoInfo } from "./utils/getVideoInfo";
+import ObjectDetectionControls from "./components/ObjectDetectionControls";
+import { createObjectTracker } from "./utils/kalmanfilter";
 
 const App = () => {
   const [loading, setLoading] = useState({ loading: true, progress: 0 });
@@ -17,23 +18,27 @@ const App = () => {
   });
 
   const [detectionResults, setDetectionResults] = useState([]);
+  console.log("🚀 ~ App ~ detectionResults:", detectionResults);
   const [currentTime, setCurrentTime] = useState(0);
-  const [isVideoEnded, setIsVideoEnded] = useState(false);
+  // const [isVideoEnded, setIsVideoEnded] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [videoInfo, setVideoInfo] = useState(null);
+  const [tracker, setTracker] = useState(null);
+  const [selectedFrame, setSelectedFrame] = useState(null);
+  const [selectedObject, setSelectedObject] = useState(null);
+  const [trackingResults, setTrackingResults] = useState([]);
 
-  const imageRef = useRef(null);
-  const cameraRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
   const modelName = "yolov10n";
 
+  console.log("🚀 ~ App ~ model:", model);
   useEffect(() => {
     tf.ready().then(async () => {
       const yolov8 = await tf.loadGraphModel(
-        `${window.location.href}/${modelName}_web_model/model.json`,
+        `${modelName}_web_model/model.json`,
         {
           onProgress: (fractions) => {
             setLoading({ loading: true, progress: fractions });
@@ -53,6 +58,233 @@ const App = () => {
       tf.dispose([warmupResults, dummyInput]);
     });
   }, []);
+
+  const resetDetection = () => {
+    setDetectionResults([]);
+    setCurrentTime(0);
+    setVideoInfo(null);
+    // setIsVideoEnded(false);
+    setIsProcessing(false);
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext("2d");
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    }
+  };
+  const renderTrackingFrame = (results, canvas) => {
+    if (results.length === 0) return;
+
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 추적 경로 그리기
+    ctx.beginPath();
+    ctx.moveTo(results[0].x, results[0].y);
+    for (let i = 1; i < results.length; i++) {
+      ctx.lineTo(results[i].x, results[i].y);
+    }
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 각 프레임의 위치에 점 그리기
+    results.forEach((result) => {
+      ctx.fillStyle = "blue";
+      ctx.beginPath();
+      ctx.arc(result.x, result.y, 3, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // 바운딩 박스 그리기 (있는 경우에만)
+      if (result.box) {
+        ctx.strokeStyle = "green";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          result.box.x,
+          result.box.y,
+          result.box.width,
+          result.box.height
+        );
+      }
+    });
+
+    // 마지막 위치에 큰 점 그리기
+    const lastResult = results[results.length - 1];
+    ctx.fillStyle = "red";
+    ctx.beginPath();
+    ctx.arc(lastResult.x, lastResult.y, 5, 0, 2 * Math.PI);
+    ctx.fill();
+  };
+  const detectObjects = async () => {
+    if (!videoRef.current || !model.net) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    const [input, xRatio, yRatio] = preprocess(
+      video,
+      model.inputShape[1],
+      model.inputShape[2]
+    );
+
+    const [boxesTensor, scoresTensor] = model.net.execute(input);
+    const [boxes, scores, classes] = postprocess(boxesTensor, scoresTensor);
+
+    const [filteredBoxes, filteredScores, filteredClasses] =
+      await nonMaxSuppression(boxes, scores, classes);
+
+    const frameData = renderBoxes(
+      canvas,
+      filteredBoxes,
+      filteredScores,
+      filteredClasses,
+      [xRatio, yRatio],
+      true
+    );
+
+    setSelectedFrame({
+      time: video.currentTime,
+      objects: frameData,
+      boxes: filteredBoxes,
+      scores: filteredScores,
+      classes: filteredClasses,
+      ratios: [xRatio, yRatio],
+    });
+
+    tf.dispose([input, boxesTensor, scoresTensor, boxes, scores, classes]);
+  };
+
+  const trackObject = async () => {
+    if (!selectedObject || !videoRef.current || !model.net) {
+      console.error("Cannot start tracking:", {
+        selectedObject,
+        videoRef: videoRef.current,
+        model: model.net,
+      });
+      return;
+    }
+
+    setIsProcessing({ status: true, progress: 0 });
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const results = [];
+
+    console.log("Starting tracking for object:", selectedObject);
+    console.log("Starting tracking from time:", selectedFrame.time);
+    video.currentTime = selectedFrame.time;
+    const frameDuration = 1 / videoInfo.videoFPS;
+
+    // Initialize the tracker
+    const tracker = new createObjectTracker(selectedObject);
+
+    while (video.currentTime < video.duration) {
+      const currentTime = video.currentTime;
+
+      const [input, xRatio, yRatio] = preprocess(
+        video,
+        model.inputShape[1],
+        model.inputShape[2]
+      );
+
+      const [boxesTensor, scoresTensor] = model.net.execute(input);
+      const [boxes, scores, classes] = postprocess(boxesTensor, scoresTensor);
+
+      const [filteredBoxes, filteredScores, filteredClasses] =
+        await nonMaxSuppression(boxes, scores, classes);
+
+      const frameData = renderBoxes(
+        canvas,
+        filteredBoxes,
+        filteredScores,
+        filteredClasses,
+        [xRatio, yRatio],
+        false
+      );
+
+      // Predict the object's new position
+      const predictedPosition = tracker.predict(currentTime);
+
+      // Find the closest detection of the same class
+      const closestDetection = frameData.reduce((closest, obj) => {
+        if (obj.class !== tracker.class) return closest;
+
+        const distance = Math.sqrt(
+          Math.pow(obj.x - predictedPosition.x, 2) +
+            Math.pow(obj.y - predictedPosition.y, 2)
+        );
+
+        if (!closest || distance < closest.distance) {
+          return { ...obj, distance };
+        }
+        return closest;
+      }, null);
+
+      let updatedPosition;
+      if (closestDetection && closestDetection.distance < 100) {
+        // If a close detection is found, update the tracker
+        updatedPosition = tracker.update(closestDetection, currentTime);
+        console.log(`Object found at time ${currentTime}:`, updatedPosition);
+      } else {
+        // If no close detection is found, use the predicted position
+        if (tracker.incrementMissedFrames()) {
+          updatedPosition = tracker.predict(currentTime);
+          console.log(
+            `Object not found at time ${currentTime}, using predicted position:`,
+            updatedPosition
+          );
+        } else {
+          console.log(`Object lost at time ${currentTime}`);
+          break;
+        }
+      }
+
+      results.push({
+        time: currentTime,
+        x: updatedPosition.x,
+        y: updatedPosition.y,
+        box: closestDetection ? closestDetection.box : null,
+      });
+
+      // Render tracking results
+      renderTrackingFrame(results, canvas);
+
+      tf.dispose([input, boxesTensor, scoresTensor, boxes, scores, classes]);
+
+      await new Promise((resolve) => {
+        video.onseeked = resolve;
+        video.currentTime += frameDuration;
+      });
+
+      setIsProcessing((prev) => ({
+        ...prev,
+        progress: (currentTime / video.duration) * 100,
+      }));
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    console.log("Tracking completed. Results:", results);
+    setTrackingResults(results);
+    setIsProcessing({ status: false, progress: 100 });
+    video.currentTime = selectedFrame.time;
+    renderTrackingFrame(results, canvas);
+  };
+
+  const renderTracking = (results) => {
+    if (results.length === 0) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+
+    ctx.beginPath();
+    ctx.moveTo(results[0].x, results[0].y);
+
+    for (let i = 1; i < results.length; i++) {
+      ctx.lineTo(results[i].x, results[i].y);
+    }
+
+    ctx.strokeStyle = "red";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  };
 
   const processVideo = async () => {
     if (!videoInfo) {
@@ -154,17 +386,14 @@ const App = () => {
 
     if (detectionResults.length === 0) return;
 
-    // Find the frame that is closest to, but not exceeding the current time
+    // Find the frame that is closest to the current time
     const currentFrame = detectionResults.reduce((prev, curr) =>
-      curr.time <= time &&
-      Math.abs(curr.time - time) < Math.abs(prev.time - time)
-        ? curr
-        : prev
+      Math.abs(curr.time - time) < Math.abs(prev.time - time) ? curr : prev
     );
 
-    // Draw all previous points
+    // Draw all previous points up to the current frame
     detectionResults
-      .filter((r) => r.time <= time)
+      .filter((r) => r.time <= currentFrame.time)
       .forEach((frame) => {
         frame.points.forEach((point) => {
           ctx.fillStyle = point.color;
@@ -175,16 +404,14 @@ const App = () => {
       });
 
     // Draw current frame's bounding boxes
-    if (currentFrame) {
-      renderBoxes(
-        canvas,
-        currentFrame.boxes,
-        currentFrame.scores,
-        currentFrame.classes,
-        currentFrame.ratios,
-        true
-      );
-    }
+    renderBoxes(
+      canvas,
+      currentFrame.boxes,
+      currentFrame.scores,
+      currentFrame.classes,
+      currentFrame.ratios,
+      true
+    );
   };
 
   const handleVideoLoad = async (event) => {
@@ -196,7 +423,7 @@ const App = () => {
       setVideoDuration(0);
     }
     setCurrentTime(0);
-    setIsVideoEnded(false);
+    // setIsVideoEnded(false);
     setDetectionResults([]);
 
     // Get video info
@@ -211,7 +438,7 @@ const App = () => {
   };
 
   const handleVideoEnd = () => {
-    setIsVideoEnded(true);
+    // setIsVideoEnded(true);
   };
 
   const handleTimeUpdate = (event) => {
@@ -236,10 +463,7 @@ const App = () => {
       )}
       <div className="header">
         <h1>📷 YOLOv10 Object Tracking App</h1>
-        <p>
-          YOLOv10 object tracking application on browser powered by{" "}
-          <code>tensorflow.js</code>
-        </p>
+
         <p>
           Serving : <code className="code">{modelName}</code>
         </p>
@@ -249,6 +473,8 @@ const App = () => {
         <video
           ref={videoRef}
           onLoadedMetadata={handleVideoLoad}
+          onTimeUpdate={handleTimeUpdate}
+          onEnded={handleVideoEnd}
           style={{ display: "none" }}
         />
         <canvas
@@ -258,7 +484,7 @@ const App = () => {
         />
       </div>
 
-      {videoDuration > 0 && (
+      {videoInfo && (
         <input
           type="range"
           min="0"
@@ -270,10 +496,21 @@ const App = () => {
         />
       )}
 
+      <ObjectDetectionControls
+        detectObjects={detectObjects}
+        trackObject={trackObject}
+        selectedFrame={selectedFrame}
+        setSelectedObject={setSelectedObject}
+        selectedObject={selectedObject}
+        isProcessing={isProcessing}
+      />
+
       <ButtonHandler
         videoRef={videoRef}
         processVideo={processVideo}
         isProcessing={isProcessing}
+        setIsProcessing={setIsProcessing}
+        resetDetection={resetDetection}
       />
 
       {isProcessing && (

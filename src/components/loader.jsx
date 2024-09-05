@@ -1,4 +1,5 @@
 import "../style/loader.css";
+/* eslint-disable */
 
 const Loader = (props) => {
   return (
